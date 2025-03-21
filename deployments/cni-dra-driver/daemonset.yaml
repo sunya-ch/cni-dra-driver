@@ -1,0 +1,86 @@
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cni-dra-driver
+  labels:
+    app: cni-dra-driver
+spec:
+  selector:
+    matchLabels:
+      app: cni-dra-driver
+  template:
+    metadata:
+      labels:
+        app: cni-dra-driver
+    spec:
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+      serviceAccountName: cni-dra-driver-service-account
+      hostNetwork: true
+      hostPID: true
+      containers:
+      - name: cni-dra-driver
+        image: cni-dra-driver
+        imagePullPolicy: Always
+        command:
+        - ./cni-dra-driver
+        args:
+        - "run"
+        - "--plugin-index=53"
+        - "--node-name=$(NODE_NAME)"
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: cri-socket
+          mountPath: /var/run/nri/nri.sock
+        - name: cni
+          mountPath: /host/etc/cni/net.d
+        - name: cnibin
+          mountPath: /opt/cni/bin
+        - name: hostroot
+          mountPath: /hostroot
+          mountPropagation: HostToContainer
+        - name: host-run-netns
+          mountPath: /run/netns
+          mountPropagation: HostToContainer
+        - name: host-var-lib-cni-cni-dra-driver
+          mountPath: /var/lib/cni/cni-dra-driver
+        - name: plugins-registry
+          mountPath: /var/lib/kubelet/plugins_registry
+        - name: plugins
+          mountPath: /var/lib/kubelet/plugins
+      volumes:
+      - name: cri-socket
+        hostPath:
+          path: /var/run/nri/nri.sock
+          type: Socket
+      - name: cni
+        hostPath:
+          path: /etc/cni/net.d
+      - name: cnibin
+        hostPath:
+          path: /opt/cni/bin
+      - name: hostroot
+        hostPath:
+          path: /
+      - name: host-run-netns
+        hostPath:
+          path: /run/netns/
+      - name: host-var-lib-cni-cni-dra-driver
+        hostPath:
+          path: /var/lib/cni/cni-dra-driver
+      - name: plugins-registry
+        hostPath:
+          path: /var/lib/kubelet/plugins_registry
+      - name: plugins
+        hostPath:
+          path: /var/lib/kubelet/plugins

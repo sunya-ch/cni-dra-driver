@@ -1,0 +1,39 @@
+---
+apiVersion: resource.k8s.io/v1beta1
+kind: ResourceSlice
+metadata:
+  name: kind-worker-cni-dra-driver
+spec:
+  devices:
+  - name: eth0
+    basic:
+      attributes:
+        name:
+          string: "eth0"
+  - name: eth1
+    basic:
+      attributes:
+        name:
+          string: "eth1"
+  driver: cni.dra.networking.x-k8s.io
+  nodeName: kind-worker
+  pool:
+    name: network-interface
+    resourceSliceCount: 1
+---
+apiVersion: resource.k8s.io/v1beta1
+kind: ResourceSlice
+metadata:
+  name: kind-worker2-cni-dra-driver
+spec:
+  devices:
+  - name: eth0
+    basic:
+      attributes:
+        name:
+          string: "eth0"
+  driver: cni.dra.networking.x-k8s.io
+  nodeName: kind-worke2
+  pool:
+    name: network-interface
+    resourceSliceCount: 1

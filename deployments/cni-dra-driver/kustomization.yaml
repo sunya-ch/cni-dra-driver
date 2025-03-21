@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: cni-dra-driver
+
+images:
+- name: cni-dra-driver
+  newName: sigs.k8s.io/cni-dra-driver/cni-dra-driver
+  newTag: latest
+
+resources:
+- cluster-role-binding.yaml
+- cluster-role.yaml
+- daemonset.yaml
+- deviceclass.yaml
+- resourceslice.yaml
+- service-account.yaml

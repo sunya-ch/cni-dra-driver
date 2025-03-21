@@ -1,0 +1,5 @@
+---
+apiVersion: resource.k8s.io/v1beta1
+kind: DeviceClass
+metadata:
+  name: cni.networking.x-k8s.io

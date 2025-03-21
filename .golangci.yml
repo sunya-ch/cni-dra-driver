@@ -1,0 +1,24 @@
+run:
+  deadline: 5m
+
+linters:
+  disable-all: true
+  enable:
+  - errcheck
+  - copyloopvar
+  - gochecknoinits
+  - gocritic
+  - goimports
+  - gomodguard
+  - gosec
+  - gosimple
+  - ineffassign
+  - misspell
+  - revive
+  - staticcheck
+  - stylecheck
+  - typecheck
+  - unconvert
+  - unparam
+  - unused
+  - whitespace

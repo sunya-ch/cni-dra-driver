@@ -1,0 +1,11 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cni-dra-driver-cluster-role
+rules:
+- apiGroups:
+  - ""
+  - resource.k8s.io
+  resources: ["*"]
+  verbs: ["*"]

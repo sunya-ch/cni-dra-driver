@@ -1,0 +1,205 @@
+/*
+Copyright 2025 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package dra
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	resourcev1beta1 "k8s.io/api/resource/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/dynamic-resource-allocation/kubeletplugin"
+	"k8s.io/klog/v2"
+	drapb "k8s.io/kubelet/pkg/apis/dra/v1alpha4"
+)
+
+type PodResourceStore interface {
+	Add(podUID types.UID, allocation *resourcev1beta1.ResourceClaim)
+}
+
+type Driver struct {
+	driverName       string
+	kubeClient       kubernetes.Interface
+	draPlugin        kubeletplugin.DRAPlugin
+	podResourceStore PodResourceStore
+}
+
+func Start(
+	ctx context.Context,
+	driverName string,
+	nodeName string,
+	kubeClient kubernetes.Interface,
+	podResourceStore PodResourceStore,
+) (*Driver, error) {
+	d := &Driver{
+		driverName:       driverName,
+		kubeClient:       kubeClient,
+		podResourceStore: podResourceStore,
+	}
+
+	pluginRegistrationPath := filepath.Join("/var/lib/kubelet/plugins_registry/", fmt.Sprintf("%s.sock", driverName))
+	driverPluginPath := filepath.Join("/var/lib/kubelet/plugins/", driverName)
+
+	err := os.MkdirAll(driverPluginPath, 0750)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create plugin path %s: %v", driverPluginPath, err)
+	}
+
+	driverPluginSocketPath := filepath.Join(driverPluginPath, "plugin.sock")
+
+	opts := []kubeletplugin.Option{
+		kubeletplugin.DriverName(driverName),
+		kubeletplugin.NodeName(nodeName),
+		kubeletplugin.KubeClient(kubeClient),
+		kubeletplugin.RegistrarSocketPath(pluginRegistrationPath),
+		kubeletplugin.PluginSocketPath(driverPluginSocketPath),
+		kubeletplugin.KubeletPluginSocketPath(driverPluginSocketPath),
+	}
+	driver, err := kubeletplugin.Start(ctx, []any{d}, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("start kubelet plugin: %w", err)
+	}
+	d.draPlugin = driver
+
+	err = wait.PollUntilContextTimeout(ctx, 1*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
+		status := d.draPlugin.RegistrationStatus()
+		if status == nil {
+			return false, nil
+		}
+		return status.PluginRegistered, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return d, nil
+}
+
+func (d *Driver) Stop() {
+	if d.draPlugin != nil {
+		d.draPlugin.Stop()
+	}
+}
+
+func (d *Driver) NodePrepareResources(ctx context.Context, request *drapb.NodePrepareResourcesRequest) (*drapb.NodePrepareResourcesResponse, error) {
+	if request == nil {
+		return nil, nil
+	}
+
+	resp := &drapb.NodePrepareResourcesResponse{
+		Claims: make(map[string]*drapb.NodePrepareResourceResponse),
+	}
+
+	for uid, claimReq := range request.GetClaims() {
+		klog.FromContext(ctx).Info("NodePrepareResources: Claim Request", "uid", uid, "claimReq", claimReq)
+
+		devices, err := d.nodePrepareResource(ctx, claimReq)
+		if err != nil {
+			klog.FromContext(ctx).Error(err, "error unpreparing ressources for a claim", "claimReq.Namespace", claimReq.Namespace, "claimReq.Name", claimReq.Name)
+
+			resp.Claims[claimReq.UID] = &drapb.NodePrepareResourceResponse{
+				Error: err.Error(),
+			}
+
+			continue
+		}
+
+		resp.Claims[claimReq.UID] = &drapb.NodePrepareResourceResponse{
+			Devices: devices,
+		}
+	}
+
+	return resp, nil
+}
+
+func (d *Driver) nodePrepareResource(ctx context.Context, claimReq *drapb.Claim) ([]*drapb.Device, error) {
+	// The plugin must retrieve the claim itself to get it in the version that it understands.
+	claim, err := d.kubeClient.ResourceV1beta1().ResourceClaims(claimReq.Namespace).Get(ctx, claimReq.Name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("retrieve claim %s/%s: %w", claimReq.Namespace, claimReq.Name, err)
+	}
+
+	if claim.Status.Allocation == nil {
+		return nil, fmt.Errorf("claim %s/%s not allocated", claimReq.Namespace, claimReq.Name)
+	}
+
+	if claim.UID != types.UID(claimReq.UID) {
+		return nil, fmt.Errorf("claim %s/%s got replaced", claimReq.Namespace, claimReq.Name)
+	}
+
+	for _, reserved := range claim.Status.ReservedFor {
+		if reserved.Resource != "pods" || reserved.APIGroup != "" {
+			klog.FromContext(ctx).Info("claim reference unsupported", "reserved", reserved)
+
+			continue
+		}
+
+		klog.FromContext(ctx).Info("nodePrepareResource: Claim Request reserved for pod", "claimReq.UID", claimReq.UID, "reserved.Name", reserved.Name, "reserved.UID", reserved.UID)
+		d.podResourceStore.Add(reserved.UID, claim)
+	}
+
+	var devices []*drapb.Device
+	for _, result := range claim.Status.Allocation.Devices.Results {
+		device := &drapb.Device{
+			PoolName:   result.Pool,
+			DeviceName: result.Device,
+		}
+
+		devices = append(devices, device)
+	}
+
+	klog.FromContext(ctx).Info("nodePrepareResource: Devices for Claim Request", "claimReq.UID", claimReq.UID, "devices", devices)
+
+	return devices, nil
+}
+
+func (d *Driver) NodeUnprepareResources(ctx context.Context, request *drapb.NodeUnprepareResourcesRequest) (*drapb.NodeUnprepareResourcesResponse, error) {
+	if request == nil {
+		return nil, nil
+	}
+	resp := &drapb.NodeUnprepareResourcesResponse{
+		Claims: make(map[string]*drapb.NodeUnprepareResourceResponse),
+	}
+
+	for _, claimReq := range request.Claims {
+		err := d.nodeUnprepareResource(ctx, claimReq)
+		if err != nil {
+			klog.FromContext(ctx).Error(err, "error unpreparing ressources for a claim", "claimReq.Namespace", claimReq.Namespace, "claimReq.Name", claimReq.Name)
+
+			resp.Claims[claimReq.UID] = &drapb.NodeUnprepareResourceResponse{
+				Error: err.Error(),
+			}
+
+			continue
+		}
+
+		resp.Claims[claimReq.UID] = &drapb.NodeUnprepareResourceResponse{}
+	}
+
+	return resp, nil
+}
+
+func (d *Driver) nodeUnprepareResource(_ context.Context, _ *drapb.Claim) error {
+	// TODO
+	return nil
+}

@@ -1,0 +1,66 @@
+---
+apiVersion: resource.k8s.io/v1beta1
+kind: ResourceClaimTemplate
+metadata:
+  name: macvlan-eth1-attachment
+spec:
+  spec:
+    devices:
+      requests:
+      - name: macvlan-eth1
+        deviceClassName: cni.networking.x-k8s.io
+        allocationMode: ExactCount
+        adminAccess: true # Required since the device selected should not be clained but instead utilized to create the macvlan.
+        count: 1
+        selectors:
+        - cel:
+            expression: device.driver == "cni.dra.networking.x-k8s.io"
+        - cel:
+            expression: device.attributes["cni.dra.networking.x-k8s.io"].name == "eth1"
+      config:
+      - requests:
+        - macvlan-eth1
+        opaque:
+          driver: cni.dra.networking.x-k8s.io
+          parameters: # CNIParameters with the GVK, interface name and CNI Config (in YAML format).
+            apiVersion: cni.networking.x-k8s.io/v1alpha1
+            kind: CNI
+            ifName: "net1"
+            config:
+              cniVersion: 1.0.0
+              name: macvlan-eth1
+              plugins:
+              - type: macvlan
+                master: eth1
+                mode: bridge
+                ipam:
+                  type: host-local
+                  ranges:
+                  - - subnet: 10.10.1.0/24
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-application
+  labels:
+    app: demo-application
+spec:
+  replicas: 15
+  selector:
+    matchLabels:
+      app: demo-application
+  template:
+    metadata:
+      labels:
+        app: demo-application
+    spec:
+      containers:
+      - name: alpine
+        image: alpine:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - sleep
+        - infinity
+      resourceClaims:
+      - name: macvlan-eth1-attachment
+        resourceClaimTemplateName: macvlan-eth1-attachment
