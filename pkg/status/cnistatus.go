@@ -44,13 +44,14 @@ func (cnish *CNIStatusHandler) UpdateStatus(ctx context.Context, claim *resource
 		return fmt.Errorf("cni.handleClaim: failed to NewResultFromResult result (%v): %v", result, err)
 	}
 
+	data := runtime.RawExtension{
+		Raw: resultBytes,
+	}
 	claim.Status.Devices = append(claim.Status.Devices, resourcev1beta1.AllocatedDeviceStatus{
-		Driver: claim.Status.Allocation.Devices.Results[0].Driver,
-		Pool:   claim.Status.Allocation.Devices.Results[0].Pool,
-		Device: claim.Status.Allocation.Devices.Results[0].Device,
-		Data: runtime.RawExtension{
-			Raw: resultBytes,
-		},
+		Driver:      claim.Status.Allocation.Devices.Results[0].Driver,
+		Pool:        claim.Status.Allocation.Devices.Results[0].Pool,
+		Device:      claim.Status.Allocation.Devices.Results[0].Device,
+		Data:        &data,
 		NetworkData: cniResultToNetworkData(cniResult),
 	})
 

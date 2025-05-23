@@ -21,17 +21,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	resourcev1beta1 "k8s.io/api/resource/v1beta1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
-	drapb "k8s.io/kubelet/pkg/apis/dra/v1alpha4"
 )
+
+var _ kubeletplugin.DRAPlugin = &Driver{}
 
 type PodResourceStore interface {
 	Add(podUID types.UID, allocation *resourcev1beta1.ResourceClaim)
@@ -40,8 +41,14 @@ type PodResourceStore interface {
 type Driver struct {
 	driverName       string
 	kubeClient       kubernetes.Interface
-	draPlugin        kubeletplugin.DRAPlugin
+	draPlugin        *kubeletplugin.Helper
 	podResourceStore PodResourceStore
+
+	prepareResourcesFailure   error
+	failPrepareResourcesMutex sync.Mutex
+
+	unprepareResourcesFailure   error
+	failUnprepareResourcesMutex sync.Mutex
 }
 
 func Start(
@@ -57,7 +64,6 @@ func Start(
 		podResourceStore: podResourceStore,
 	}
 
-	pluginRegistrationPath := filepath.Join("/var/lib/kubelet/plugins_registry/", fmt.Sprintf("%s.sock", driverName))
 	driverPluginPath := filepath.Join("/var/lib/kubelet/plugins/", driverName)
 
 	err := os.MkdirAll(driverPluginPath, 0750)
@@ -65,21 +71,18 @@ func Start(
 		return nil, fmt.Errorf("failed to create plugin path %s: %v", driverPluginPath, err)
 	}
 
-	driverPluginSocketPath := filepath.Join(driverPluginPath, "plugin.sock")
-
-	opts := []kubeletplugin.Option{
-		kubeletplugin.DriverName(driverName),
-		kubeletplugin.NodeName(nodeName),
+	plugin, err := kubeletplugin.Start(
+		ctx,
+		d,
 		kubeletplugin.KubeClient(kubeClient),
-		kubeletplugin.RegistrarSocketPath(pluginRegistrationPath),
-		kubeletplugin.PluginSocketPath(driverPluginSocketPath),
-		kubeletplugin.KubeletPluginSocketPath(driverPluginSocketPath),
-	}
-	driver, err := kubeletplugin.Start(ctx, []any{d}, opts...)
+		kubeletplugin.NodeName(nodeName),
+		kubeletplugin.DriverName(driverName),
+	)
+
 	if err != nil {
 		return nil, fmt.Errorf("start kubelet plugin: %w", err)
 	}
-	d.draPlugin = driver
+	d.draPlugin = plugin
 
 	err = wait.PollUntilContextTimeout(ctx, 1*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
 		status := d.draPlugin.RegistrationStatus()
@@ -101,50 +104,16 @@ func (d *Driver) Stop() {
 	}
 }
 
-func (d *Driver) NodePrepareResources(ctx context.Context, request *drapb.NodePrepareResourcesRequest) (*drapb.NodePrepareResourcesResponse, error) {
-	if request == nil {
-		return nil, nil
+func (d *Driver) nodePrepareResource(ctx context.Context, claim *resourcev1beta1.ResourceClaim) ([]kubeletplugin.Device, error) {
+	if claim == nil {
+		return nil, fmt.Errorf("nil claim")
 	}
-
-	resp := &drapb.NodePrepareResourcesResponse{
-		Claims: make(map[string]*drapb.NodePrepareResourceResponse),
-	}
-
-	for uid, claimReq := range request.GetClaims() {
-		klog.FromContext(ctx).Info("NodePrepareResources: Claim Request", "uid", uid, "claimReq", claimReq)
-
-		devices, err := d.nodePrepareResource(ctx, claimReq)
-		if err != nil {
-			klog.FromContext(ctx).Error(err, "error unpreparing ressources for a claim", "claimReq.Namespace", claimReq.Namespace, "claimReq.Name", claimReq.Name)
-
-			resp.Claims[claimReq.UID] = &drapb.NodePrepareResourceResponse{
-				Error: err.Error(),
-			}
-
-			continue
-		}
-
-		resp.Claims[claimReq.UID] = &drapb.NodePrepareResourceResponse{
-			Devices: devices,
-		}
-	}
-
-	return resp, nil
-}
-
-func (d *Driver) nodePrepareResource(ctx context.Context, claimReq *drapb.Claim) ([]*drapb.Device, error) {
-	// The plugin must retrieve the claim itself to get it in the version that it understands.
-	claim, err := d.kubeClient.ResourceV1beta1().ResourceClaims(claimReq.Namespace).Get(ctx, claimReq.Name, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("retrieve claim %s/%s: %w", claimReq.Namespace, claimReq.Name, err)
-	}
-
 	if claim.Status.Allocation == nil {
-		return nil, fmt.Errorf("claim %s/%s not allocated", claimReq.Namespace, claimReq.Name)
+		return nil, fmt.Errorf("claim %s/%s not allocated", claim.Namespace, claim.Name)
 	}
 
-	if claim.UID != types.UID(claimReq.UID) {
-		return nil, fmt.Errorf("claim %s/%s got replaced", claimReq.Namespace, claimReq.Name)
+	if claim.UID != types.UID(claim.UID) {
+		return nil, fmt.Errorf("claim %s/%s got replaced", claim.Namespace, claim.Name)
 	}
 
 	for _, reserved := range claim.Status.ReservedFor {
@@ -154,52 +123,75 @@ func (d *Driver) nodePrepareResource(ctx context.Context, claimReq *drapb.Claim)
 			continue
 		}
 
-		klog.FromContext(ctx).Info("nodePrepareResource: Claim Request reserved for pod", "claimReq.UID", claimReq.UID, "reserved.Name", reserved.Name, "reserved.UID", reserved.UID)
+		klog.FromContext(ctx).Info("nodePrepareResource: Claim Request reserved for pod", "claimReq.UID", claim.UID, "reserved.Name", reserved.Name, "reserved.UID", reserved.UID)
 		d.podResourceStore.Add(reserved.UID, claim)
 	}
 
-	var devices []*drapb.Device
+	var devices []kubeletplugin.Device
 	for _, result := range claim.Status.Allocation.Devices.Results {
-		device := &drapb.Device{
+		device := kubeletplugin.Device{
 			PoolName:   result.Pool,
 			DeviceName: result.Device,
 		}
-
 		devices = append(devices, device)
 	}
 
-	klog.FromContext(ctx).Info("nodePrepareResource: Devices for Claim Request", "claimReq.UID", claimReq.UID, "devices", devices)
+	klog.FromContext(ctx).Info("nodePrepareResource: Devices for Claim", "claim.UID", claim.UID, "devices", devices)
 
 	return devices, nil
 }
 
-func (d *Driver) NodeUnprepareResources(ctx context.Context, request *drapb.NodeUnprepareResourcesRequest) (*drapb.NodeUnprepareResourcesResponse, error) {
-	if request == nil {
-		return nil, nil
-	}
-	resp := &drapb.NodeUnprepareResourcesResponse{
-		Claims: make(map[string]*drapb.NodeUnprepareResourceResponse),
-	}
-
-	for _, claimReq := range request.Claims {
-		err := d.nodeUnprepareResource(ctx, claimReq)
-		if err != nil {
-			klog.FromContext(ctx).Error(err, "error unpreparing ressources for a claim", "claimReq.Namespace", claimReq.Namespace, "claimReq.Name", claimReq.Name)
-
-			resp.Claims[claimReq.UID] = &drapb.NodeUnprepareResourceResponse{
-				Error: err.Error(),
-			}
-
-			continue
-		}
-
-		resp.Claims[claimReq.UID] = &drapb.NodeUnprepareResourceResponse{}
-	}
-
-	return resp, nil
-}
-
-func (d *Driver) nodeUnprepareResource(_ context.Context, _ *drapb.Claim) error {
+func (d *Driver) nodeUnprepareResource(_ context.Context, _ string) error {
 	// TODO
 	return nil
+}
+
+// modified
+
+// PrepareResourceClaims
+func (d *Driver) PrepareResourceClaims(ctx context.Context, claims []*resourcev1beta1.ResourceClaim) (result map[types.UID]kubeletplugin.PrepareResult, err error) {
+	if failure := d.getPrepareResourcesFailure(); failure != nil {
+		return nil, failure
+	}
+	result = make(map[types.UID]kubeletplugin.PrepareResult)
+	for _, claim := range claims {
+
+		devices, err := d.nodePrepareResource(ctx, claim)
+		var claimResult kubeletplugin.PrepareResult
+		if err != nil {
+			klog.FromContext(ctx).Error(err, "error unpreparing ressources for a claim", "claim.Namespace", claim.Namespace, "claim.Name", claim.Name)
+			claimResult.Err = err
+		} else {
+			claimResult.Devices = devices
+		}
+		result[claim.UID] = claimResult
+	}
+	return result, nil
+}
+
+func (d *Driver) UnprepareResourceClaims(ctx context.Context, claims []kubeletplugin.NamespacedObject) (result map[types.UID]error, err error) {
+	result = make(map[types.UID]error)
+
+	if failure := d.getUnprepareResourcesFailure(); failure != nil {
+		return nil, failure
+	}
+
+	for _, claimRef := range claims {
+		uid := string(claimRef.UID)
+		err := d.nodeUnprepareResource(ctx, uid)
+		result[claimRef.UID] = err
+	}
+	return result, nil
+}
+
+func (d *Driver) getPrepareResourcesFailure() error {
+	d.failPrepareResourcesMutex.Lock()
+	defer d.failPrepareResourcesMutex.Unlock()
+	return d.prepareResourcesFailure
+}
+
+func (d *Driver) getUnprepareResourcesFailure() error {
+	d.failUnprepareResourcesMutex.Lock()
+	defer d.failUnprepareResourcesMutex.Unlock()
+	return d.unprepareResourcesFailure
 }
