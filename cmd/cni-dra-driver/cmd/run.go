@@ -26,6 +26,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/cni-dra-driver/pkg/cni"
+	"sigs.k8s.io/cni-dra-driver/pkg/discovery"
 	"sigs.k8s.io/cni-dra-driver/pkg/dra"
 	"sigs.k8s.io/cni-dra-driver/pkg/nri"
 	"sigs.k8s.io/cni-dra-driver/pkg/status"
@@ -40,6 +41,10 @@ type runOptions struct {
 	ChrootDir     string
 	DRADriverName string
 	NodeName      string
+
+	numDevices                     int
+	numSharedDevices               int
+	numSharedDevicesWithConsumable int
 }
 
 func newCmdRun() *cobra.Command {
@@ -103,6 +108,26 @@ func newCmdRun() *cobra.Command {
 		"Node Name.",
 	)
 
+	cmd.Flags().IntVar(
+		&runOpts.numDevices,
+		"num-devices",
+		8,
+		"The number of devices to be generated.",
+	)
+
+	cmd.Flags().IntVar(
+		&runOpts.numSharedDevices,
+		"shared-devices",
+		1,
+		"The number of shared devices without consumable capacity to be generated.",
+	)
+	cmd.Flags().IntVar(
+		&runOpts.numSharedDevicesWithConsumable,
+		"shared-devices-with-consumable-capacity",
+		1,
+		"The number of shared devices with consumable capacity to be generated.",
+	)
+
 	return cmd
 }
 
@@ -125,6 +150,16 @@ func (ro *runOptions) run(ctx context.Context) {
 	}
 
 	memoryStore := store.NewMemory()
+	config := discovery.Config{
+		NumDevices:                     ro.numDevices,
+		NumSharedDevices:               ro.numSharedDevices,
+		NumSharedDevicesWithConsumable: ro.numSharedDevicesWithConsumable,
+	}
+	deviceDiscovery, err := discovery.NewDeviceDiscovery(config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initiate device discovery: %v\n", err)
+		os.Exit(1)
+	}
 
 	draDriver, err := dra.Start(
 		ctx,
@@ -132,6 +167,7 @@ func (ro *runOptions) run(ctx context.Context) {
 		ro.NodeName,
 		clientset,
 		memoryStore,
+		*deviceDiscovery,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to dra.Start: %v\n", err)

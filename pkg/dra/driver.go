@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/cni-dra-driver/pkg/discovery"
 )
 
 var _ kubeletplugin.DRAPlugin = &Driver{}
@@ -43,6 +44,7 @@ type Driver struct {
 	kubeClient       kubernetes.Interface
 	draPlugin        *kubeletplugin.Helper
 	podResourceStore PodResourceStore
+	deviceDiscovery  discovery.DeviceDiscovery
 
 	prepareResourcesFailure   error
 	failPrepareResourcesMutex sync.Mutex
@@ -57,11 +59,13 @@ func Start(
 	nodeName string,
 	kubeClient kubernetes.Interface,
 	podResourceStore PodResourceStore,
+	deviceDiscovery discovery.DeviceDiscovery,
 ) (*Driver, error) {
 	d := &Driver{
 		driverName:       driverName,
 		kubeClient:       kubeClient,
 		podResourceStore: podResourceStore,
+		deviceDiscovery:  deviceDiscovery,
 	}
 
 	driverPluginPath := filepath.Join("/var/lib/kubelet/plugins/", driverName)
@@ -78,6 +82,11 @@ func Start(
 		kubeletplugin.NodeName(nodeName),
 		kubeletplugin.DriverName(driverName),
 	)
+
+	resources := deviceDiscovery.GetResources(nodeName)
+	if err := plugin.PublishResources(ctx, resources); err != nil {
+		return nil, err
+	}
 
 	if err != nil {
 		return nil, fmt.Errorf("start kubelet plugin: %w", err)
