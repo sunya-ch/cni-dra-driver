@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/cni-dra-driver/pkg/cni"
 	"sigs.k8s.io/cni-dra-driver/pkg/discovery"
 )
 
@@ -51,6 +52,8 @@ type Driver struct {
 
 	unprepareResourcesFailure   error
 	failUnprepareResourcesMutex sync.Mutex
+
+	cnirt *cni.Runtime
 }
 
 func Start(
@@ -60,12 +63,14 @@ func Start(
 	kubeClient kubernetes.Interface,
 	podResourceStore PodResourceStore,
 	deviceDiscovery discovery.DeviceDiscovery,
+	cnirt *cni.Runtime,
 ) (*Driver, error) {
 	d := &Driver{
 		driverName:       driverName,
 		kubeClient:       kubeClient,
 		podResourceStore: podResourceStore,
 		deviceDiscovery:  deviceDiscovery,
+		cnirt:            cnirt,
 	}
 
 	driverPluginPath := filepath.Join("/var/lib/kubelet/plugins/", driverName)
@@ -144,6 +149,9 @@ func (d *Driver) nodePrepareResource(ctx context.Context, claim *resourcev1beta1
 		}
 		devices = append(devices, device)
 	}
+	if err := d.cnirt.UpdateDummyStatus(ctx, claim); err != nil {
+		klog.FromContext(ctx).Error(err, "error updating status")
+	}
 
 	klog.FromContext(ctx).Info("nodePrepareResource: Devices for Claim", "claim.UID", claim.UID, "devices", devices)
 
@@ -174,6 +182,7 @@ func (d *Driver) PrepareResourceClaims(ctx context.Context, claims []*resourcev1
 			claimResult.Devices = devices
 		}
 		result[claim.UID] = claimResult
+
 	}
 	return result, nil
 }

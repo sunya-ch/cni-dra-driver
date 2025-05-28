@@ -20,14 +20,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 
 	"github.com/containernetworking/cni/libcni"
 	cnitypes "github.com/containernetworking/cni/pkg/types"
+	"golang.org/x/exp/rand"
 	resourcev1beta1 "k8s.io/api/resource/v1beta1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/cni-dra-driver/apis/v1alpha1"
+
+	current "github.com/containernetworking/cni/pkg/types/100"
 )
 
 type PodResourceStore interface {
@@ -94,6 +98,39 @@ func (rntm *Runtime) AttachNetworks(
 		}
 	}
 
+	return nil
+}
+
+// randomIP returns 10.0.<random>.<random>/16 in string
+func randomIP() string {
+	ip := fmt.Sprintf("10.0.%d.%d/16",
+		rand.Intn(256),
+		rand.Intn(256),
+	)
+	return ip
+}
+
+func (rntm *Runtime) UpdateDummyStatus(ctx context.Context, claim *resourcev1beta1.ResourceClaim) error {
+	ip := randomIP()
+	ipVal, reservedIP, err := net.ParseCIDR(ip)
+	if err != nil {
+		return fmt.Errorf("failed to parse IP %s: %v", ip, err)
+	}
+	reservedIP.IP = ipVal
+	result := &current.Result{
+		CNIVersion: current.ImplementedSpecVersion,
+		IPs: []*current.IPConfig{
+			{
+				Address: *reservedIP,
+			},
+		},
+	}
+	if rntm.updateStatusFunc == nil {
+		return fmt.Errorf("no update function set")
+	}
+	if err := rntm.updateStatusFunc(ctx, claim, result); err != nil {
+		return fmt.Errorf("Runtime.handleClaim: failed to update status (%v): %v", result, err)
+	}
 	return nil
 }
 

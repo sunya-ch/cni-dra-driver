@@ -161,20 +161,6 @@ func (ro *runOptions) run(ctx context.Context) {
 		os.Exit(1)
 	}
 
-	draDriver, err := dra.Start(
-		ctx,
-		ro.DRADriverName,
-		ro.NodeName,
-		clientset,
-		memoryStore,
-		*deviceDiscovery,
-	)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to dra.Start: %v\n", err)
-		os.Exit(1)
-	}
-	defer draDriver.Stop()
-
 	cnish := status.CNIStatusHandler{
 		ClientSet: clientset,
 	}
@@ -187,6 +173,21 @@ func (ro *runOptions) run(ctx context.Context) {
 		cnish.UpdateStatus,
 		memoryStore,
 	)
+
+	draDriver, err := dra.Start(
+		ctx,
+		ro.DRADriverName,
+		ro.NodeName,
+		clientset,
+		memoryStore,
+		*deviceDiscovery,
+		cni,
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to dra.Start: %v\n", err)
+		os.Exit(1)
+	}
+	defer draDriver.Stop()
 
 	p := &nri.Plugin{
 		ClientSet: clientset,

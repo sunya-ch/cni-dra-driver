@@ -26,11 +26,16 @@ import (
 	resourcev1beta1 "k8s.io/api/resource/v1beta1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	clientset "k8s.io/client-go/kubernetes"
 )
 
 type CNIStatusHandler struct {
 	ClientSet clientset.Interface
+}
+
+func shareDeviceName(deviceName string, sharedUID types.UID) string {
+	return fmt.Sprintf("%s@sid:%s", deviceName, sharedUID)
 }
 
 func (cnish *CNIStatusHandler) UpdateStatus(ctx context.Context, claim *resourcev1beta1.ResourceClaim, result cnitypes.Result) error {
@@ -47,15 +52,20 @@ func (cnish *CNIStatusHandler) UpdateStatus(ctx context.Context, claim *resource
 	data := runtime.RawExtension{
 		Raw: resultBytes,
 	}
-	claim.Status.Devices = append(claim.Status.Devices, resourcev1beta1.AllocatedDeviceStatus{
+	deviceName := claim.Status.Allocation.Devices.Results[0].Device
+	if claim.Status.Allocation.Devices.Results[0].ShareUID != nil {
+		sharedUID := *claim.Status.Allocation.Devices.Results[0].ShareUID
+		deviceName = shareDeviceName(deviceName, sharedUID)
+	}
+	deviceStatus := resourcev1beta1.AllocatedDeviceStatus{
 		Driver:      claim.Status.Allocation.Devices.Results[0].Driver,
 		Pool:        claim.Status.Allocation.Devices.Results[0].Pool,
-		Device:      claim.Status.Allocation.Devices.Results[0].Device,
+		Device:      deviceName,
 		Data:        &data,
 		NetworkData: cniResultToNetworkData(cniResult),
-		ShareUID:    claim.Status.Allocation.Devices.Results[0].ShareUID,
-	})
+	}
 
+	claim.Status.Devices = append(claim.Status.Devices, deviceStatus)
 	_, err = cnish.ClientSet.ResourceV1beta1().ResourceClaims(claim.GetNamespace()).UpdateStatus(ctx, claim, v1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("cni.handleClaim: failed to update resource claim status (%v): %v", result, err)
