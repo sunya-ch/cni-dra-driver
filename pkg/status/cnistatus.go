@@ -34,8 +34,11 @@ type CNIStatusHandler struct {
 	ClientSet clientset.Interface
 }
 
-func shareDeviceName(deviceName string, sharedUID types.UID) string {
-	return fmt.Sprintf("%s@sid:%s", deviceName, sharedUID)
+func GetAllocatedDeviceStatusDeviceName(deviceName string, sharedUID *types.UID) string {
+	if sharedUID != nil {
+		return fmt.Sprintf("%s/%s", deviceName, *sharedUID)
+	}
+	return deviceName
 }
 
 func (cnish *CNIStatusHandler) UpdateStatus(ctx context.Context, claim *resourcev1beta1.ResourceClaim, result cnitypes.Result) error {
@@ -52,11 +55,8 @@ func (cnish *CNIStatusHandler) UpdateStatus(ctx context.Context, claim *resource
 	data := runtime.RawExtension{
 		Raw: resultBytes,
 	}
-	deviceName := claim.Status.Allocation.Devices.Results[0].Device
-	if claim.Status.Allocation.Devices.Results[0].ShareUID != nil {
-		sharedUID := *claim.Status.Allocation.Devices.Results[0].ShareUID
-		deviceName = shareDeviceName(deviceName, sharedUID)
-	}
+	deviceName := GetAllocatedDeviceStatusDeviceName(claim.Status.Allocation.Devices.Results[0].Device,
+		claim.Status.Allocation.Devices.Results[0].ShareUID)
 	deviceStatus := resourcev1beta1.AllocatedDeviceStatus{
 		Driver:      claim.Status.Allocation.Devices.Results[0].Driver,
 		Pool:        claim.Status.Allocation.Devices.Results[0].Pool,
