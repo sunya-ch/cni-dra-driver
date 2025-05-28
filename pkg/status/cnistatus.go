@@ -53,6 +53,7 @@ func (cnish *CNIStatusHandler) UpdateStatus(ctx context.Context, claim *resource
 		Device:      claim.Status.Allocation.Devices.Results[0].Device,
 		Data:        &data,
 		NetworkData: cniResultToNetworkData(cniResult),
+		ShareUID:    claim.Status.Allocation.Devices.Results[0].ShareUID,
 	})
 
 	_, err = cnish.ClientSet.ResourceV1beta1().ResourceClaims(claim.GetNamespace()).UpdateStatus(ctx, claim, v1.UpdateOptions{})
