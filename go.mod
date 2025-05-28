@@ -67,12 +67,12 @@ require (
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
 
-replace k8s.io/api => github.com/sunya-ch/kubernetes/staging/src/k8s.io/api v0.0.0-20250523080951-534a9a6c15fb
+replace k8s.io/api => github.com/sunya-ch/kubernetes/staging/src/k8s.io/api v0.0.0-20250528113302-51f20f05b888
 
-replace k8s.io/kubelet/pkg/apis => github.com/sunya-ch/kubernetes/staging/src/k8s.io/kubelet/pkg/apis v0.0.0-20250523080951-534a9a6c15fb
+replace k8s.io/kubelet/pkg/apis => github.com/sunya-ch/kubernetes/staging/src/k8s.io/kubelet/pkg/apis v0.0.0-20250528113302-51f20f05b888
 
-replace k8s.io/client-go => github.com/sunya-ch/kubernetes/staging/src/k8s.io/client-go v0.0.0-20250523080951-534a9a6c15fb
+replace k8s.io/client-go => github.com/sunya-ch/kubernetes/staging/src/k8s.io/client-go v0.0.0-20250528113302-51f20f05b888
 
-replace k8s.io/apimachinery => github.com/sunya-ch/kubernetes/staging/src/k8s.io/apimachinery v0.0.0-20250523080951-534a9a6c15fb
+replace k8s.io/apimachinery => github.com/sunya-ch/kubernetes/staging/src/k8s.io/apimachinery v0.0.0-20250528113302-51f20f05b888
 
-replace k8s.io/dynamic-resource-allocation => github.com/sunya-ch/kubernetes/staging/src/k8s.io/dynamic-resource-allocation v0.0.0-20250523080951-534a9a6c15fb
+replace k8s.io/dynamic-resource-allocation => github.com/sunya-ch/kubernetes/staging/src/k8s.io/dynamic-resource-allocation v0.0.0-20250528113302-51f20f05b888
