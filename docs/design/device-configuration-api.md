@@ -83,7 +83,7 @@ type CNIArgSource struct {
   // ResourceSliceFieldRef selects a field of ResourceSlice where the selected device belong to: spec.nodeName
   // +oneOf
   // +optional
-	ResourceSliceFieldRef *ObjectFieldSelector `json:"resourceSliceFieldRef,omitempty" protobuf:"bytes,1,opt,name=resourceSliceFieldRef"`
+  ResourceSliceFieldRef *ObjectFieldSelector `json:"resourceSliceFieldRef,omitempty" protobuf:"bytes,1,opt,name=resourceSliceFieldRef"`
 }
 ```
 
