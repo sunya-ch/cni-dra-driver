@@ -27,19 +27,63 @@ To support scenarios where multiple network interfaces are required, a ResourceC
 ### Configuration
 
 This API defines the parameters and CNI configuration required to invoke CNI plugins. The `CNIConfig` object encapsulates two fields:
+* `CNIVersion`: specifies 
 * `IfName`: specifies the name of the network interface to be configured.
-* `Config`: contains the CNI configuration represented as a generic type `runtime.RawExtension`.
+* `Plugins`: contains list of plugins.
+
+The CNI configuration represented as a generic type `runtime.RawExtension`.
 
 ```golang
 // CNIConfig is the object used in ResourceClaim.specs.devices.config opaque parameters.
 type CNIConfig struct {
-	metav1.TypeMeta `json:",inline"`
+  metav1.TypeMeta `json:",inline"`
 
-	// IfName represents the name of the network interface requested.
-	IfName string `json:"ifName"`
+  // CNIVersion defines CNI version.
+  CNIVersion Version `json:"cniVersion"`
 
-	// Config represents the CNI Config.
-	Config runtime.RawExtension `json:"config"`
+  // IfName defines network interface to be configured.
+  IfName string `json:"name"`
+
+  // Plugins contain list of CNI plugin definitions.
+  Plugins []CNIPlugin `json:"plugins"`
+}
+
+// CNIPlugin defines a CNI plugin definition.
+type CNIPlugin struct {
+  // Type defines valid type of plugin (available in cni-bin path)
+  Type string `json:"type"`
+
+  // Config represents the static CNI Config.
+  Config runtime.RawExtension `json:"config"`
+
+  // Args defines CNI-specific dynamic arguments
+  Args []CNIArg
+}
+
+// CNIArg defines an argument to set value in CNI config in runtime.
+type CNIArg struct {
+  // fieldPath defines field path of the argument to set
+  fieldPath string `json:"field"`
+
+  // Value defines a constant value
+  Value string `json:"value"`
+
+  // Source for the CNI argument's value. Cannot be used if value is not empty.
+  // +optional
+  ValueFrom *CNIArgSource `json:"valueFrom,omitempty" protobuf:"bytes,3,opt,name=valueFrom"`
+}
+
+// CNIArgSource defines a source of argument value.
+type CNIArgSource struct {
+  // Attribute uses device attribute as source
+  // +oneOf
+  // +optional
+  AttributeRef *string `json:"attribute"`
+
+  // ResourceSliceFieldRef selects a field of ResourceSlice where the selected device belong to: spec.nodeName
+  // +oneOf
+  // +optional
+	ResourceSliceFieldRef *ObjectFieldSelector `json:"resourceSliceFieldRef,omitempty" protobuf:"bytes,1,opt,name=resourceSliceFieldRef"`
 }
 ```
 
@@ -52,34 +96,36 @@ Here is an example below of a ResourceClaim definition that includes the CNI con
 apiVersion: resource.k8s.io/v1beta1
 kind: ResourceClaim
 metadata:
-  name: macvlan-eth0-attachment
+  name: one-macvlan-attachment
 spec:
   devices:
     requests:
-    - name: macvlan-eth0
+    - name: macvlan0
       deviceClassName: cni.networking.x-k8s.io
       allocationMode: ExactCount
       count: 1
     config:
     - requests:
-      - macvlan-eth0
+      - macvlan0
       opaque:
         driver: cni.dra.networking.x-k8s.io
         parameters: # CNIParameters with the GVK, interface name and CNI Config (in YAML format).
           apiVersion: cni.networking.x-k8s.io/v1alpha1
           kind: CNI
           ifName: "net1"
-          config:
-            cniVersion: 1.0.0
-            name: macvlan-eth0
-            plugins:
-            - type: macvlan
-              master: eth0
+          cniVersion: 1.0.0
+          plugins:
+          - type: macvlan
+            config:
               mode: bridge
               ipam:
                 type: host-local
                 ranges:
                 - - subnet: 10.10.1.0/24
+            arguments:
+            - fieldPath: master
+              valueFrom:
+                attributeRef: name
 ```
 
 ### Status
@@ -96,33 +142,7 @@ apiVersion: resource.k8s.io/v1beta1
 kind: ResourceClaim
 metadata:
   name: macvlan-eth0-attachment
-spec:
-  devices:
-    config:
-    - opaque:
-        driver: cni.dra.networking.x-k8s.io
-        parameters:
-          apiVersion: cni.dra.networking.x-k8s.io/v1alpha1
-          kind: CNI
-          ifName: "net1"
-          config:
-            cniVersion: 1.0.0
-            name: macvlan-eth0
-            plugins:
-            - type: macvlan
-              master: eth0
-              mode: bridge
-              ipam:
-                type: host-local
-                ranges:
-                - - subnet: 10.10.1.0/24
-      requests:
-      - macvlan-eth0
-    requests:
-    - allocationMode: ExactCount
-      count: 1
-      deviceClassName: cni.networking.x-k8s.io
-      name: macvlan-eth0
+...
 status:
   allocation:
     devices:
@@ -135,7 +155,7 @@ status:
             ifName: "net1"
             config:
               cniVersion: 1.0.0
-              name: macvlan-eth0
+              name: macvlan0
               plugins:
               - type: macvlan
                 master: eth0
@@ -145,13 +165,13 @@ status:
                   ranges:
                   - - subnet: 10.10.1.0/24
         requests:
-        - macvlan-eth0
+        - macvlan0
         source: FromClaim
       results:
       - device: cni
         driver: cni.dra.networking.x-k8s.io
         pool: kind-worker
-        request: macvlan-eth0
+        request: macvlan0
     nodeSelector:
       nodeSelectorTerms:
       - matchFields:
