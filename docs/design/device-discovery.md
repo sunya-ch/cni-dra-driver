@@ -1,8 +1,25 @@
 # Device Discovery
 
-The driver discovers and initially lists up all available network device `type=device` in the ResourceSlice with common attributes such as interface name, and IP/Mac addresses.
+## Summary
 
-Additionally, it provides a API socket to receive registration of new device or new attribute to the ResourceSlice from external providers. The attribute from external provider will be suffix. For example, provider `bctl` registers attribute `bandwidth` to the driver. The attribute `bctl.bandwidth` will be added if the interface name exists.
+This document outlines a mechanism for publishing a ResourceSlice of network devices. The design standardizes the representation of network devices, incorporating both common specifications and federated attributes sourced from third-party information providers.
+
+## Motivation
+
+Dynamic Resource Allocation (DRA) enables flexible and on-demand configuration of network devices, eliminating the need for static configuration binding to the interface name or address. Devices can be dynamically selected and configured with any supported Container Network Interface (CNI) based on user requests.
+
+While common attributes of network-class devices—such as name, device type, and addresses—are typically well-defined and discoverable through a well-known software package like hwloc, certain CNI implementations may require additional, CNI-specific attributes. Furthermore, third-party tools can provide extended metadata, such as real-time bandwidth and latency metrics obtained from benchmarks like iPerf. To support comprehensive and flexible device discovery and selection, it is essential to define a standardized API and a mechanism that can integrate both native and external attributes.
+
+## Design
+
+The driver initially discovers and lists all available network devices (type=device) in the ResourceSlice, including common attributes such as interface name, IP address, and MAC address.
+
+In addition, the driver exposes an API socket that allows external providers to:
+
+- Register unlisted devices (e.g., devices not of `type=device`, such as `veth` or `vlan`), or
+- Add custom attributes to existing devices in the `ResourceSlice`.
+
+Attributes provided by external sources are namespaced using a suffix format. For example, if a provider named `bctl` registers a `bandwidth` attribute, the driver will add it as `bctl.bandwidth`, assuming the corresponding interface already exists.
 
 ```proto
 // gRPC service definition
