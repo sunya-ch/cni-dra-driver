@@ -12,6 +12,8 @@ Configuring and reporting network interfaces in Kubernetes currently lacks a sta
 
 This document defines the configuration API for configuring network interfaces on pods using CNI and outlines the behaviors and interactions during the operations (e.g. `ADD` and `DEL`) on the network interfaces and pods. The capabilities and limitations of this approach are also highlighted to ensure a clear understanding of its scope.
 
+The configuration API must be extensible to support runtime variables derived from dynamic allocation, such as the interface name or host name, along with their corresponding values — for example, a pre-configured CIDR range.
+
 Additionally, this solution will serve as a reference implementation for the [Multi-Network](https://github.com/kubernetes-sigs/multi-network) project and for the [KEP-4817 (Resource Claim Status With Possible Standardized Network Interface Data)](https://github.com/kubernetes/enhancements/blob/master/keps/sig-node/4817-resource-claim-device-status/README.md).
 
 ## Design
