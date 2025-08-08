@@ -268,3 +268,57 @@ Opaque Parameter validation:
 * [k8snetworkplumbingwg/multus-cni](https://github.com/k8snetworkplumbingwg/multus-cni)
 * [KEP-4817 - Resource Claim Status with possible standardized network interface data](https://github.com/kubernetes/enhancements/issues/4817)
 * [containernetworking/cni#1132 - VALIDATE Operation](https://github.com/containernetworking/cni/issues/1132)
+
+## Alternatives
+
+### CNI configuration via a separate resource
+
+Allowing users to configure CNI poses significant security risks, including privilege escalation, network isolation breaches, denial-of-service attacks, data exfiltration, and execution of arbitrary code, especially since CNIs often run with elevated privileges and control critical network settings. Misconfigurations or use of untrusted plugins can lead to IP spoofing, unauthorized network access, or malware introduction. To mitigate these risks, CNI configuration should be tightly controlled, limited to trusted users, validated through policies, and restricted to approved plugins to maintain secure and reliable container networking.
+
+Instead of embedding CNI configuration directly within a ResourceClaim, which introduces security and control concerns, we can define a separate, dedicated API (e.g., CNIConfig) to manage and validate CNI configurations centrally. The ResourceClaim can then reference the desired CNI setup by name through a parameter (e.g., configName), allowing users to select from pre-approved configurations without having direct control over the CNI spec. This approach enhances security, simplifies validation, and enables administrators to maintain tighter control over available networking options.
+
+For example:
+
+```yaml
+kind: CNIConfig
+metadata:
+  name: macvlan-host-local
+spec:
+  apiVersion: cni.networking.x-k8s.io/v1alpha1
+  kind: CNI
+  ifName: "net1"
+  cniVersion: 1.0.0
+  plugins:
+  - type: macvlan
+    config:
+      mode: bridge
+      ipam:
+        type: host-local
+        ranges:
+        - - subnet: 10.10.1.0/24
+    arguments:
+    - fieldPath: master
+      valueFrom:
+      attributeRef: name
+```
+
+```yaml
+apiVersion: resource.k8s.io/v1beta1
+kind: ResourceClaim
+metadata:
+  name: one-macvlan-attachment
+spec:
+  devices:
+    requests:
+    - name: macvlan0
+      deviceClassName: cni.networking.x-k8s.io
+      allocationMode: ExactCount
+      count: 1
+    config:
+    - requests:
+      - macvlan0
+      opaque:
+        driver: cni.dra.networking.x-k8s.io
+        parameters:
+          configName: macvlan-host-local
+```
