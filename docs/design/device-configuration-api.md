@@ -84,7 +84,35 @@ type CNIArgSource struct {
   // +oneOf
   // +optional
   ResourceSliceFieldRef *ObjectFieldSelector `json:"resourceSliceFieldRef,omitempty" protobuf:"bytes,1,opt,name=resourceSliceFieldRef"`
+
+  // Selects a key of a ConfigMap.
+  // For example, define a range of CIDR based on nodeName and interface name
+  //
+  // +optional
+  ConfigMapKeyRef *ConfigMapKeySelector `json:"configMapKeyRef,omitempty" protobuf:"bytes,3,opt,name=configMapKeyRef"`
 }
+
+type ConfigMapKeySelector struct {
+  // The ConfigMap to select from.
+  LocalObjectReference `json:",inline" protobuf:"bytes,1,opt,name=localObjectReference"`
+
+  // The key to select.
+  // +oneOf
+  // +optional
+  Key string `json:"key" protobuf:"bytes,2,opt,name=key"`
+
+  // AttributeKey uses device attribute as a config map key such as name of interface
+  // +oneOf
+  // +optional
+  AttributeKey *string `json:"attribute"`
+
+  // ResourceSliceFieldKey uses a field of ResourceSlice as a config map key such as nodeName
+  // +oneOf
+  // +optional
+  ResourceSliceFieldKey *ObjectFieldSelector `json:"resourceSliceFieldRef,omitempty" protobuf:"bytes,1,opt,name=resourceSliceFieldRef"`
+}
+
+
 ```
 
 Requests using the device class `cni.networking.x-k8s.io` must include exactly one configuration attached to it, so each configuration must point to a single request (one-to-one relationship between the config (CNI object) and the request). This configuration must specify the driver name `cni.dra.networking.x-k8s.io` and the corresponding `CNIConfig` object in the `opaque.parameters` field. 
