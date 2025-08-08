@@ -12,14 +12,15 @@ While common attributes of network-class devices—such as name, device type, an
 
 ## Design
 
-The driver initially discovers and lists all available network devices (type=device) in the ResourceSlice, including common attributes such as interface name, IP address, and MAC address.
+The driver initially discovers and lists all available network devices (type=device) in the ResourceSlice, including common attributes such as interface name, IP address, and MAC address. For every network devices, the `allowMultipleAllocations` is set to `true` with a common `count` capacity set to the maximum number of pods per node by default.
 
 In addition, the driver exposes an API socket that allows external providers to:
 
 - Register unlisted devices (e.g., devices not of `type=device`, such as `veth` or `vlan`), or
-- Add custom attributes to existing devices in the `ResourceSlice`.
+- Add custom attributes to existing devices
+- Add custom capacity to existing devices
 
-Attributes provided by external sources are namespaced using a suffix format. For example, if a provider named `bctl` registers a `bandwidth` attribute, the driver will add it as `bctl.bandwidth`, assuming the corresponding interface already exists.
+Attributes provided by external sources are namespaced using a suffix format. For example, if a provider named `bctl` registers a `bandwidth` capacity and `rdma` attribute, the driver will add it as `bctl/bandwidth`, assuming the corresponding interface already exists.
 
 ```proto
 // gRPC service definition
@@ -30,20 +31,85 @@ service DeviceRegistry {
 
 // Request to register multiple attributes for a device
 message RegisterAttributesRequest {
-  // Device name (e.g., "eth1")
-  string device_name = 1;
+  // Device refers to driver identifier.
+  //
+  // +required
+  optional string device = 1;
 
-  // Provider name (e.g., "bctl")
-  string provider = 2;
+  // Provider refers to provider identifier (e.g., "bctl")
+  //
+  // +required
+  optional string provider = 2;
 
-  // List of attributes to register
-  repeated Attribute attributes = 3;
+  // Attributes defines the set of attributes for this device.
+  // The name of each attribute must be unique in that set.
+  //
+  // The maximum number of attributes and capacities combined is 32.
+  //
+  // +optional
+  map<string, DeviceAttribute> attributes = 2;
+
+  // Capacity defines the set of capacities for this device.
+  // The name of each capacity must be unique in that set.
+  //
+  // The maximum number of attributes and capacities combined is 32.
+  //
+  // +optional
+  map<string, DeviceCapacity> capacity = 3;
 }
 
-// Single attribute entry (name/value)
-message Attribute {
-  string name = 1;   // e.g., "bandwidth"
-  string value = 2;  // e.g., "1G"
+// DeviceAttribute must have exactly one field set.
+message DeviceAttribute {
+  // IntValue is a number.
+  //
+  // +optional
+  // +oneOf=ValueType
+  optional int64 int = 2;
+
+  // BoolValue is a true/false value.
+  //
+  // +optional
+  // +oneOf=ValueType
+  optional bool bool = 3;
+
+  // StringValue is a string. Must not be longer than 64 characters.
+  //
+  // +optional
+  // +oneOf=ValueType
+  optional string string = 4;
+
+  // VersionValue is a semantic version according to semver.org spec 2.0.0.
+  // Must not be longer than 64 characters.
+  //
+  // +optional
+  // +oneOf=ValueType
+  optional string version = 5;
+}
+
+// DeviceCapacity describes a quantity associated with a device.
+message DeviceCapacity {
+  // Value defines how much of a certain capacity that device has.
+  //
+  // This field reflects the fixed total capacity and does not change.
+  // The consumed amount is tracked separately by scheduler
+  // and does not affect this value.
+  //
+  // +required
+  optional .k8s.io.apimachinery.pkg.api.resource.Quantity value = 1;
+
+  // RequestPolicy defines how this DeviceCapacity must be consumed
+  // when the device is allowed to be shared by multiple allocations.
+  //
+  // The Device must have allowMultipleAllocations set to true in order to set a requestPolicy.
+  //
+  // If unset, capacity requests are unconstrained:
+  // requests can consume any amount of capacity, as long as the total consumed
+  // across all allocations does not exceed the device's defined capacity.
+  // If request is also unset, default is the full capacity value.
+  //
+  // +optional
+  // +featureGate=DRAConsumableCapacity
+  optional CapacityRequestPolicy requestPolicy = 2;
 }
 
 // Response message
@@ -66,32 +132,50 @@ spec:
   resourceSliceCount: 2
   devices:
     - name: eth0
+      allowMultipleAllocations: true
       attributes:
-        name: "eth0"
-        ip: "192.168.1.10"
-        mac: "00:1A:2B:3C:4D:5E"
-    - name: eth1
+        name:
+          string: "eth0"
+        ip:
+          string: "192.168.1.10"
+        mac:
+          string: "00:1A:2B:3C:4D:5E"
+      capacity:
+        count:
+          values: 200
+    - name: enp1s0
+      allowMultipleAllocations: true
       attributes:
-        name: "eth1"
+        name: "enp1s0"
         ip: "192.168.1.11"
         mac: "00:1A:2B:3C:4D:5F"
-        bctl.bandwidth: "1Gbps"
+        bctl/rdma:
+          bool: true
+      capacity:
+        count:
+          values: 200
+        bctl/bandwidth:
+          value: 4096
 ```
 
 ## Alternatives
 
-The API can be a new custom resource like `CustomAttribute`.
+The API can be a new custom resource like `CustomDevice`.
 
 ```yaml
-kind: CustomAttributes
+kind: CustomDevice
 spec:
   provider: bctl
   selector:
    pool.name: default-net-pool
-  deviceName: eth0
+  device: enp1s0
+  addIfNotExist: false
   attributes:
-  - name: bandwidth
-    value: 1G
+    rdma:
+      bool: true
+  capacity:
+    bandwidth:
+      value: 4096
 status:
   desiredNumber: 1
   appliedNumber: 1
