@@ -198,7 +198,7 @@ status:
         - macvlan0
         source: FromClaim
       results:
-      - device: cni
+      - device: eth1
         driver: cni.dra.networking.x-k8s.io
         pool: kind-worker
         request: macvlan0
@@ -227,7 +227,7 @@ status:
       - address: 10.10.1.2/24
         gateway: 10.10.1.1
         interface: 0
-    device: cni
+    device: eth1
     driver: cni.dra.networking.x-k8s.io
     networkData:
       ips:
